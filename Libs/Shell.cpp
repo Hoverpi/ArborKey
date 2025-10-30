@@ -13,12 +13,11 @@ Shell::Shell() : historyIndex(0), running(false), loggedIn(false) {
         {"delete",  [this]() { this->deletePassword(); }},
         {"exit",    [this]() { this->cmdExit(); }}
     };
-
-    // Ensure vault directory exists
-    fs::create_directories("vaults");
 }
 
 Shell::~Shell() {
+    CryptoGlobalInit init;
+
     this->disableRawMode();
     this->clearSession();
 }
@@ -190,67 +189,56 @@ void Shell::signUp() {
     string password = creds.getPassword();
     
     // Check if user already exists
-    if (fs::exists(getUserVaultPath(username))) {
-        std::cout << "\r\nUser already exists!\r\n";
-        creds.clear();
-        return;
-    }
+
     
     std::cout << "\r\nCreating your secure vault...\r\n";
     
-    // Generate PBKDF2 parameters
-    PbkdfParams pbkdfParams;
-    pbkdfParams.salt = CryptoUtils::genSalt(32);
-    pbkdfParams.iterations = 100000; // Strong iteration count
-    pbkdfParams.keySize = 64; // 512-bit master key
-    
+    // Prepare master-key params & derive DMK from password
+    MasterKey mk;
+    mk.masterParams.iterations = 100000;
+    mk.masterParams.keySize = 32;
+    std::vector<uint8_t> outSalt(CryptoUtils::SALT_SIZE);
+    CryptoUtils::genSalt(outSalt, outSalt.size());
+
     // Derive master key from password
-    std::vector<uint8_t> masterKey = CryptoUtils::deriveKeyFromPassword(password, pbkdfParams);
-    
-    // Generate signing key pair for the user
-    auto signKeyPair = CryptoUtils::genSignKeyPair();
-    auto signPubKey = CryptoUtils::exportSignPublicKey(*signKeyPair);
-    
-    // Export private signing key (we need to store it encrypted)
-    std::vector<uint8_t> signPrivKeyBytes(ED25519_KEY_SIZE);
-    word32 privKeySize = (word32)signPrivKeyBytes.size();
-    if (wc_ed25519_export_private_only(&signKeyPair->key, signPrivKeyBytes.data(), &privKeySize) != 0) {
-        std::cout << "\r\nFailed to export signing key\r\n";
-        CryptoUtils::secureZero(masterKey.data(), masterKey.size());
-        creds.clear();
-        return;
-    }
-    signPrivKeyBytes.resize(privKeySize);
-    
-    // Derive sub-key for encrypting the signing key
-    std::vector<uint8_t> signKeyEncKey = CryptoUtils::subKey(masterKey, "user-signing-key-encryption", 32);
-    
-    // Encrypt the private signing key
-    MetaData signKeyMeta("User signing key");
-    EncryptedPacket encryptedSignKey = CryptoUtils::encryptData(signPrivKeyBytes, signKeyEncKey, signKeyMeta);
-    
-    // Create master key hash for verification
-    std::vector<uint8_t> masterKeyHash = CryptoUtils::calculateHash(masterKey);
+    std::vector<uint8_t> masterKey = CryptoUtils::calculateDerivedKey(password, mk, outSalt);
+
+    // wipe data
+    CryptoUtils::secureZero(masterKey.data(), masterKey.size());
+    CryptoUtils::secureZero(outSalt.data(), outSalt.size());
+
+    // Create & calculate subkey
+    SubKey sk;
+    sk.subParams.hashType = "SHA512";
+    sk.subParams.keySize = 32;
+    string info = "derived sub key";
+    CryptoUtils::genSalt(outSalt, outSalt.size());
+
+    CryptoUtils::calculateSubKey(masterKey, info, sk, outSalt);
+
+    // wipe outSalt random
+    CryptoUtils::secureZero(outSalt.data(), outSalt.size());
     
     // Create user vault
-    UserVault vault;
-    vault.username = username;
-    vault.masterKeyHash = masterKeyHash;
-    vault.signPublicKey = signPubKey;
-    vault.pbkdfParams = pbkdfParams;
-    vault.encryptedSignKey = std::move(encryptedSignKey);
-    
+    Vault v;
+    v.id = CryptoUtils::genVaultId();   // base64 string id
+    v.username = username;
+    v.mk = mk;
+    v.sk = sk;
+
     // Save vault
-    saveUserVault(vault);
+    try {
+        CryptoUtils::toFile(v, "vault.json");
+        std::cout << "Vault written to vault.json\n";
+    } catch (const std::exception& ex) {
+        std::cerr << "Error writing vault: " << ex.what() << "\n";
+    }
+    
     
     std::cout << "\r\nAccount created successfully!\r\n";
     std::cout << "Username: " << username << "\r\n";
     std::cout << "You can now login with your credentials.\r\n\r\n";
     
-    // Secure cleanup
-    CryptoUtils::secureZero(masterKey.data(), masterKey.size());
-    CryptoUtils::secureZero(signKeyEncKey.data(), signKeyEncKey.size());
-    CryptoUtils::secureZero(signPrivKeyBytes.data(), signPrivKeyBytes.size());
     creds.clear();
 }
 
@@ -270,7 +258,7 @@ void Shell::login() {
     string username = creds.getUsername();
     string password = creds.getPassword();
     
-    try {
+   /*  try {
         // Load user vault
         UserVault vault = loadUserVault(username);
         
@@ -327,22 +315,22 @@ void Shell::login() {
     } catch (const std::exception& e) {
         std::cout << "\r\nLogin failed: " << e.what() << "\r\n";
         creds.clear();
-    }
+    } */
 }
 
 void Shell::logout() {
-    if (!loggedIn) {
+    /* if (!loggedIn) {
         std::cout << "\r\nYou are not logged in.\r\n";
         return;
     }
     
     std::cout << "\r\nLogging out...\r\n";
     clearSession();
-    std::cout << "Logged out successfully.\r\n\r\n";
+    std::cout << "Logged out successfully.\r\n\r\n"; */
 }
 
 void Shell::createPassword() {
-    if (!loggedIn) {
+    /* if (!loggedIn) {
         std::cout << "\r\nPlease login first.\r\n";
         return;
     }
@@ -398,11 +386,11 @@ void Shell::createPassword() {
     }
     
     // Clear sensitive data
-    CryptoUtils::secureZero(&entry.password[0], entry.password.size());
+    CryptoUtils::secureZero(&entry.password[0], entry.password.size()); */
 }
 
 void Shell::listPasswords() {
-    if (!loggedIn) {
+/*     if (!loggedIn) {
         std::cout << "\r\nPlease login first.\r\n";
         return;
     }
@@ -437,11 +425,11 @@ void Shell::listPasswords() {
         
     } catch (const std::exception& e) {
         std::cout << "\r\nFailed to list passwords: " << e.what() << "\r\n";
-    }
+    } */
 }
 
 void Shell::viewPassword() {
-    if (!loggedIn) {
+/*     if (!loggedIn) {
         std::cout << "\r\nPlease login first.\r\n";
         return;
     }
@@ -477,11 +465,11 @@ void Shell::viewPassword() {
         
     } catch (const std::exception& e) {
         std::cout << "\r\nFailed to view password: " << e.what() << "\r\n";
-    }
+    } */
 }
 
 void Shell::deletePassword() {
-    if (!loggedIn) {
+/*     if (!loggedIn) {
         std::cout << "\r\nPlease login first.\r\n";
         return;
     }
@@ -509,20 +497,31 @@ void Shell::deletePassword() {
         
     } catch (const std::exception& e) {
         std::cout << "\r\nFailed to delete password: " << e.what() << "\r\n";
-    }
+    } */
 }
 
 void Shell::cmdExit() {
-    std::cout << "\r\nExiting ArborKey...\r\n";
+/*     std::cout << "\r\nExiting ArborKey...\r\n";
     if (loggedIn) {
         clearSession();
     }
-    this->running = false;
+    this->running = false; */
 }
 
 // Helper functions
+void Shell::clearSession() {
+/*     loggedIn = false;
+    currentUser.clear();
+    
+    if (!sessionMasterKey.empty()) {
+        CryptoUtils::secureZero(sessionMasterKey.data(), sessionMasterKey.size());
+        sessionMasterKey.clear();
+    }
+    
+    sessionSignKey.reset(); */
+}
 
-UserVault Shell::loadUserVault(const string& username) {
+/* UserVault Shell::loadUserVault(const string& username) {
     string path = getUserVaultPath(username);
     
     if (!fs::exists(path)) {
@@ -556,18 +555,6 @@ void Shell::saveUserVault(const UserVault& vault) {
 
 string Shell::getUserVaultPath(const string& username) {
     return "vaults/" + username + ".vault.json";
-}
-
-void Shell::clearSession() {
-    loggedIn = false;
-    currentUser.clear();
-    
-    if (!sessionMasterKey.empty()) {
-        CryptoUtils::secureZero(sessionMasterKey.data(), sessionMasterKey.size());
-        sessionMasterKey.clear();
-    }
-    
-    sessionSignKey.reset();
 }
 
 EncryptedPacket Shell::encryptPasswordEntry(const PasswordEntry& entry, const string& subkeyInfo) {
@@ -623,4 +610,4 @@ PasswordEntry Shell::decryptPasswordEntry(const EncryptedPacket& packet, const s
     CryptoUtils::secureZero(decryptedBytes.data(), decryptedBytes.size());
     
     return entry;
-}
+} */

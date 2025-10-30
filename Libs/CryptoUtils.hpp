@@ -83,18 +83,18 @@ struct SubKey {
 };
 
 struct Entry {
-    string id;  // Changed from uint32_t to string
+    string id;  
     string title;
     MetaData md;
     EncryptedPacket ep;
 };
 
 struct Vault {
-    string id;  // Changed from uint32_t to string
+    string id;  
     string username;
     MasterKey mk;
     SubKey sk;
-    std::vector<Entry> entries;  // Fixed: changed from single Entry to vector
+    std::vector<Entry> entries;
 };
 
 // Base64 forward declarations
@@ -113,9 +113,10 @@ public:
 // Crypto utilities interface
 class CryptoUtils {
 public:
+    static constexpr size_t ID_SIZE = 32;
     static constexpr size_t IV_SIZE = 16;
     static constexpr size_t TAG_SIZE = 16;
-    static constexpr size_t SALT_SIZE = 16;
+    static constexpr size_t SALT_SIZE = 32;
     static constexpr size_t HASH_SIZE = 64;
     static constexpr size_t CURVE25519_KEY_SIZE = 32;
 
@@ -134,12 +135,12 @@ public:
     static bool verifyDerivedKey(const string& password, const MasterKey& mk, const std::vector<uint8_t>& expectedDerived);
 
     // Subkey derivation (HKDF) and verify
-    static void calculateSubKey(const std::vector<uint8_t>& masterKey, const string& info, SubKey& sk);
+    static void calculateSubKey(const std::vector<uint8_t>& masterKey, const string& info, SubKey& sk, std::vector<uint8_t>& outSalt);
 
     static bool verifySubKey(const std::vector<uint8_t>& sessionMasterKey, const SubKey& sk, const string& info);
 
     // Convenience
-    static std::vector<uint8_t> genSalt(size_t size = SALT_SIZE);
+    static void genSalt(std::vector<uint8_t>& out, size_t size);
 
     // Entry creation helper
     static Entry createEntry(const string& id_user, const string& title, const string& url, const EncryptedPacket& ep);
@@ -164,7 +165,7 @@ public:
     static void toFile(const Vault& v, const std::string& filepath);
     static Vault fromFile(const std::string& filepath);
 
-    static std::vector<uint8_t> genRandom(size_t size);
+    static void genRandom(std::vector<uint8_t>& out, size_t size);
     static void secureZero(void* p, size_t n);
     static bool constEq(const void* a_, const void* b_, size_t n);
     static void print_hex(const string& title, const std::vector<uint8_t>& data);

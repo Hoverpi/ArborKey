@@ -6,7 +6,6 @@
 #include "thirdparty.hpp"
 #include "Credentials.hpp"
 #include "CryptoUtils.hpp"
-#include "Types.hpp"
 
 class Shell {
 private:
@@ -22,8 +21,6 @@ private:
     bool running;
     bool loggedIn;
     std::string currentUser;
-    std::vector<uint8_t> sessionMasterKey;
-    std::unique_ptr<EcKeyPair> sessionSignKey;
 
     // Internal helpers: terminal + I/O
     void enableRawMode();
@@ -43,17 +40,17 @@ private:
     void cmdExit();
 
     // Vault helpers (used from Shell.cpp)
-    UserVault loadUserVault(const std::string& username);
+/*     UserVault loadUserVault(const std::string& username);
     void saveUserVault(const UserVault& vault);
     std::string getUserVaultPath(const std::string& username);
-
+ */
     // Session management
     void clearSession();
 
     // Encryption helpers (used in Shell.cpp)
-    EncryptedPacket encryptPasswordEntry(const PasswordEntry& entry, const std::string& subkeyInfo);
+/*     EncryptedPacket encryptPasswordEntry(const PasswordEntry& entry, const std::string& subkeyInfo);
     PasswordEntry decryptPasswordEntry(const EncryptedPacket& packet, const std::string& subkeyInfo);
-
+ */
 public:
     Shell();
     ~Shell();

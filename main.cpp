@@ -1,11 +1,11 @@
-// #include "Libs/Shell.hpp"
-#include "Libs/CryptoUtils.hpp"
+#include "Libs/Shell.hpp"
+//#include "Libs/CryptoUtils.hpp"
 
 int main() {
-    /* Shell shell = Shell();
-    shell.run(); */
+    Shell shell = Shell();
+    shell.run();
     // Build a vault programmatically
-    try {
+/*     try {
         // Initialize crypto library (RAII)
         CryptoGlobalInit init;  
 
@@ -100,7 +100,7 @@ int main() {
     } catch (const std::exception& ex) {
         std::cerr << "Exception: " << ex.what() << "\n";
         return 99;
-    }
+    } */
 
     return 0;
 }

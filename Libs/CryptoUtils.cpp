@@ -117,7 +117,8 @@ CryptoGlobalInit::~CryptoGlobalInit() { wolfSSL_Cleanup(); }
 
 // process username
 string CryptoUtils::genVaultId() {
-    std::vector<uint8_t> vaultId = CryptoUtils::genRandom(32);
+    std::vector<uint8_t> vaultId(CryptoUtils::ID_SIZE);
+    CryptoUtils::genRandom(vaultId, vaultId.size());
     return Base64::encode(vaultId);
 }
 
@@ -340,7 +341,7 @@ EncryptedPacket CryptoUtils::encryptData(const std::vector<uint8_t>& plainText, 
     EncryptedPacket ep;
     ep.alg = "aes-256-gcm";
     std::vector<uint8_t> iv(CryptoUtils::IV_SIZE);
-    iv = CryptoUtils::genRandom(CryptoUtils::IV_SIZE);
+    CryptoUtils::genRandom(iv, iv.size());
     std::vector<uint8_t> tag(CryptoUtils::TAG_SIZE);
     std::vector<uint8_t> aad(aadStr.begin(), aadStr.end());
     check_alloc(aad.size(), "convert aad to vector");
@@ -463,25 +464,15 @@ bool CryptoUtils::verifyDerivedKey(const string& password, const MasterKey& mk, 
     return ok;
 }
 
-void CryptoUtils::calculateSubKey(const std::vector<uint8_t>& masterKey, const string& info, SubKey& sk) {
+void CryptoUtils::calculateSubKey(const std::vector<uint8_t>& masterKey, const string& info, SubKey& sk, std::vector<uint8_t>& outSalt) {
     check_alloc(masterKey.size(), "subKey masterKey");
     check_alloc(info.size(), "subKey info");
+    check_alloc(outSalt.size(), "calculateDerivedKey outSalt");
     if (sk.subParams.keySize == 0) throw std::invalid_argument("subKey keySize=0");
-
-    // 1) Prepare salt: generate if not present
-    std::vector<uint8_t> salt;
-    if (!sk.subParams.salt.empty()) {
-        salt = Base64::decode(sk.subParams.salt);
-        if (salt.empty()) throw std::runtime_error("Invalid base64 salt in sk.subParams.salt");
-    } else {
-        salt = CryptoUtils::genSalt(CryptoUtils::SALT_SIZE);
-        sk.subParams.salt = Base64::encode(salt); // persist salt base64
-    }
-    check_alloc(salt.size(), "subKey salt");
 
     // HKDF derive using wolfSSL wc_HKDF (HMAC-SHA512)
     std::vector<uint8_t> derived((size_t)sk.subParams.keySize);
-    if (wc_HKDF(WC_SHA512, reinterpret_cast<const byte*>(masterKey.data()), (word32)masterKey.size(), salt.data(), (word32)salt.size(),
+    if (wc_HKDF(WC_SHA512, reinterpret_cast<const byte*>(masterKey.data()), (word32)masterKey.size(), outSalt.data(), (word32)outSalt.size(),
                     reinterpret_cast<const byte*>(info.data()), (word32)info.size(), derived.data(), (word32)derived.size()) != 0) {
         CryptoUtils::secureZero(derived.data(), derived.size());
         throw std::runtime_error("wc_HKDF failed in calculateSubKey");
@@ -494,9 +485,11 @@ void CryptoUtils::calculateSubKey(const std::vector<uint8_t>& masterKey, const s
     string aadSubKey = info + ":subkey";
     sk.ep = CryptoUtils::encryptData(hashDerived, masterKey, aadSubKey);
 
+    sk.subParams.salt = Base64::encode(outSalt);
+
     CryptoUtils::secureZero(derived.data(), derived.size());
     CryptoUtils::secureZero(hashDerived.data(), hashDerived.size());
-    CryptoUtils::secureZero(salt.data(), salt.size());
+    CryptoUtils::secureZero(outSalt.data(), outSalt.size());
 }
 
 bool CryptoUtils::verifySubKey(const std::vector<uint8_t>& sessionMasterKey, const SubKey& sk, const string& info) {
@@ -555,9 +548,9 @@ bool CryptoUtils::verifySubKey(const std::vector<uint8_t>& sessionMasterKey, con
     return ok;
 }
 
-std::vector<uint8_t> CryptoUtils::genSalt(size_t size) {
-    check_alloc(size, "genSalt");
-    return genRandom(size);
+void CryptoUtils::genSalt(std::vector<uint8_t>& out, size_t size) {
+    check_alloc(size, "genSalt(out, size)");
+    genRandom(out, size);
 }
 
 EcKeyPairPtr CryptoUtils::genSignKeyPair() {
@@ -666,17 +659,19 @@ bool CryptoUtils::verifyHash(const std::vector<uint8_t>& hash1, const std::vecto
     return constEq(hash1.data(), hash2.data(), hash1.size());
 }
 
-std::vector<uint8_t> CryptoUtils::genRandom(size_t size) {
-    check_alloc(size, "genRandom");
+void CryptoUtils::genRandom(std::vector<uint8_t>& out, size_t size) {
+    check_alloc(size, "genRandom(out, size)");
     WC_RNG rng;
     if (wc_InitRng(&rng) != 0) throw std::runtime_error("wc_InitRng failed");
-    std::vector<uint8_t> buffer(size);
-    if (wc_RNG_GenerateBlock(&rng, buffer.data(), (word32)buffer.size()) != 0) {
+
+    if (out.size() != size) out.resize(size); // preserve capacity if already big enough
+
+    if (wc_RNG_GenerateBlock(&rng, out.data(), (word32)out.size()) != 0) {
         wc_FreeRng(&rng);
         throw std::runtime_error("wc_RNG_GenerateBlock failed");
     }
+
     wc_FreeRng(&rng);
-    return buffer;
 }
 
 void CryptoUtils::secureZero(void* p, size_t n) {
