@@ -128,16 +128,16 @@ public:
 
     static std::vector<uint8_t> decryptData(const EncryptedPacket& packet, const std::vector<uint8_t>& key);
 
-    // KDFs (master derivation)
-    static std::vector<uint8_t> calculateDerivedKey(const string& password, MasterKey& mk, std::vector<uint8_t>& outSalt);
+    // Master key helpers (single flexible function for both signup and login)
+    static std::vector<uint8_t> calculateMasterKey(const std::string &password, MasterKey &mk);
 
-    // Verify derived key by recomputing PBKDF2 with the mk params and provided salt
-    static bool verifyDerivedKey(const string& password, const MasterKey& mk, const std::vector<uint8_t>& expectedDerived);
+    // Optional helper to verify derived master key against an expected derived value
+    static bool verifyMasterKey(const std::string &password, const MasterKey &mk, const std::vector<uint8_t> &expectedDerived);
 
-    // Subkey derivation (HKDF) and verify
-    static void calculateSubKey(const std::vector<uint8_t>& masterKey, const string& info, SubKey& sk, std::vector<uint8_t>& outSalt);
+    // Sub-key helpers (signup: calculateSubKey; login: verifySubKey)
+    static void calculateSubKey(const std::vector<uint8_t> &masterKey, const std::string &info, SubKey &sk);
+    static bool verifySubKey(const std::vector<uint8_t> &masterKey, const SubKey &sk, const std::string &info);
 
-    static bool verifySubKey(const std::vector<uint8_t>& sessionMasterKey, const SubKey& sk, const string& info);
 
     // Convenience
     static void genSalt(std::vector<uint8_t>& out, size_t size);

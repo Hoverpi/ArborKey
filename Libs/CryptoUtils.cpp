@@ -404,142 +404,172 @@ std::vector<uint8_t> CryptoUtils::decryptData(const EncryptedPacket& ep, const s
     return plainText;
 }
 
-std::vector<uint8_t> CryptoUtils::calculateDerivedKey(const string& password, MasterKey& mk, std::vector<uint8_t>& outSalt) {
-    check_alloc(outSalt.size(), "calculateDerivedKey outSalt");
-    if (mk.masterParams.keySize <= 0) throw std::invalid_argument("calculateDerivedKey invalid keySize");
+// ---------- calculateMasterKey ----------
+// Derive master key using PBKDF2-HMAC-SHA512 using params from mk.
+// If mk.masterParams.salt is empty, generate a fresh salt and store its base64 into mk.masterParams.salt.
+// Returns the derived raw bytes (caller must zero them when done).
+std::vector<uint8_t> CryptoUtils::calculateMasterKey(const std::string &password, MasterKey &mk) {
+    if (mk.masterParams.keySize == 0) throw std::invalid_argument("calculateMasterKey: keySize must be > 0");
+    if (mk.masterParams.iterations == 0) mk.masterParams.iterations = 100000; // default
 
-    std::vector<uint8_t> key((size_t)mk.masterParams.keySize);
-    std::vector<uint8_t> pass(password.begin(), password.end());
-    check_alloc(pass.size(), "calculateDerivedKey password");
-
-    if (wc_PBKDF2(key.data(), pass.data(), (word32)pass.size(), outSalt.data(), (word32)outSalt.size(),
-                mk.masterParams.iterations, (word32)mk.masterParams.keySize, WC_SHA512) != 0) {
-        CryptoUtils::secureZero(pass.data(), pass.size());
-        CryptoUtils::secureZero(key.data(), key.size());
-
-        throw std::runtime_error("wc_PBKDF2 failed");
+    // Ensure salt exists or generate one
+    std::vector<uint8_t> salt;
+    if (mk.masterParams.salt.empty()) {
+        salt.resize(SALT_SIZE);
+        CryptoUtils::genSalt(salt, salt.size());
+        // store base64 string in mk
+        mk.masterParams.salt = Base64::encode(salt);
+    } else {
+        salt = Base64::decode(mk.masterParams.salt);
+        if (salt.empty()) throw std::runtime_error("calculateMasterKey: invalid base64 salt in MasterKey");
     }
+
+    // Prepare buffers
+    std::vector<uint8_t> out((size_t)mk.masterParams.keySize);
+    std::vector<uint8_t> pass(password.begin(), password.end());
+    check_alloc(pass.size(), "calculateMasterKey pass");
+
+    // PBKDF2-HMAC-SHA512
+    if (wc_PBKDF2(out.data(), pass.data(), (word32)pass.size(),
+                  salt.data(), (word32)salt.size(),
+                  mk.masterParams.iterations,
+                  (word32)mk.masterParams.keySize,
+                  WC_SHA512) != 0) {
+        CryptoUtils::secureZero(pass.data(), pass.size());
+        CryptoUtils::secureZero(out.data(), out.size());
+        CryptoUtils::secureZero(salt.data(), salt.size());
+        throw std::runtime_error("calculateMasterKey: PBKDF2 failed");
+    }
+
+    // wipe sensitive temporaries (pass, salt)
     CryptoUtils::secureZero(pass.data(), pass.size());
+    CryptoUtils::secureZero(salt.data(), salt.size());
 
-    // persist salt as Base64 in mk
-    mk.masterParams.salt = Base64::encode(outSalt);
-    mk.alg = "PBKDF2-HMAC-SHA512";
-
-    return key;
+    return out; // caller must secureZero() when done
 }
 
-bool CryptoUtils::verifyDerivedKey(const string& password, const MasterKey& mk, const std::vector<uint8_t>& expectedDerived) {
+
+// ---------- verifyMasterKey ----------
+// Derive from password using mk's params and constant-time compare to expectedDerived.
+bool CryptoUtils::verifyMasterKey(const std::string &password, const MasterKey &mk, const std::vector<uint8_t> &expectedDerived) {
+    if (mk.masterParams.keySize == 0) return false;
     if (expectedDerived.empty()) return false;
     if (mk.masterParams.salt.empty()) return false;
 
-    // decode salt from mk
     std::vector<uint8_t> salt = Base64::decode(mk.masterParams.salt);
     if (salt.empty()) return false;
 
-    std::vector<uint8_t> recomputed((size_t)mk.masterParams.keySize);
     std::vector<uint8_t> pass(password.begin(), password.end());
+    std::vector<uint8_t> out((size_t)mk.masterParams.keySize);
+    int res = wc_PBKDF2(out.data(), pass.data(), (word32)pass.size(),
+                        salt.data(), (word32)salt.size(),
+                        mk.masterParams.iterations,
+                        (word32)mk.masterParams.keySize,
+                        WC_SHA512);
 
-    if (wc_PBKDF2(recomputed.data(),
-                pass.data(), (word32)pass.size(),
-                salt.data(), (word32)salt.size(),
-                mk.masterParams.iterations,
-                (word32)mk.masterParams.keySize,
-                WC_SHA512) != 0) {
-        CryptoUtils::secureZero(pass.data(), pass.size());
+    CryptoUtils::secureZero(pass.data(), pass.size());
+    CryptoUtils::secureZero(salt.data(), salt.size());
+
+    if (res != 0) {
+        CryptoUtils::secureZero(out.data(), out.size());
         return false;
     }
-    CryptoUtils::secureZero(pass.data(), pass.size());
 
-    // compare BEFORE zeroing recomputed
-    bool ok = false;
-    if (recomputed.size() == expectedDerived.size()) {
-        ok = CryptoUtils::verifyHash(recomputed, expectedDerived);
-    } else {
-        ok = false;
-    }
+    bool ok = (out.size() == expectedDerived.size() && CryptoUtils::constEq(out.data(), expectedDerived.data(), out.size()));
 
-    // wipe recomputed
-    CryptoUtils::secureZero(recomputed.data(), recomputed.size());
-
+    CryptoUtils::secureZero(out.data(), out.size());
     return ok;
 }
 
-void CryptoUtils::calculateSubKey(const std::vector<uint8_t>& masterKey, const string& info, SubKey& sk, std::vector<uint8_t>& outSalt) {
-    check_alloc(masterKey.size(), "subKey masterKey");
-    check_alloc(info.size(), "subKey info");
-    check_alloc(outSalt.size(), "calculateDerivedKey outSalt");
-    if (sk.subParams.keySize == 0) throw std::invalid_argument("subKey keySize=0");
 
-    // HKDF derive using wolfSSL wc_HKDF (HMAC-SHA512)
-    std::vector<uint8_t> derived((size_t)sk.subParams.keySize);
-    if (wc_HKDF(WC_SHA512, reinterpret_cast<const byte*>(masterKey.data()), (word32)masterKey.size(), outSalt.data(), (word32)outSalt.size(),
-                    reinterpret_cast<const byte*>(info.data()), (word32)info.size(), derived.data(), (word32)derived.size()) != 0) {
-        CryptoUtils::secureZero(derived.data(), derived.size());
-        throw std::runtime_error("wc_HKDF failed in calculateSubKey");
+// ---------- calculateSubKey ----------
+// Using masterKey (raw bytes) and info string, derive a subkey via HKDF (SHA512),
+// store base64-encoded salt in sk.subParams.salt and store an EncryptedPacket (with base64 fields) in sk.ep.
+void CryptoUtils::calculateSubKey(const std::vector<uint8_t> &masterKey, const std::string &info, SubKey &sk) {
+    if (masterKey.empty()) throw std::invalid_argument("calculateSubKey: masterKey empty");
+    if (sk.subParams.keySize == 0) sk.subParams.keySize = 32;
+    if (sk.subParams.hashType.empty()) sk.subParams.hashType = "SHA512";
+
+    // generate salt and store base64
+    std::vector<uint8_t> salt(SALT_SIZE);
+    CryptoUtils::genSalt(salt, salt.size());
+    sk.subParams.salt = Base64::encode(salt);
+
+    // derive subkey using HKDF(SHA512)
+    std::vector<uint8_t> subkey((size_t)sk.subParams.keySize);
+    if (wc_HKDF(WC_SHA512,
+                reinterpret_cast<const byte*>(masterKey.data()), (word32)masterKey.size(),
+                salt.data(), (word32)salt.size(),
+                reinterpret_cast<const byte*>(info.data()), (word32)info.size(),
+                subkey.data(), (word32)subkey.size()) != 0) {
+        CryptoUtils::secureZero(subkey.data(), subkey.size());
+        CryptoUtils::secureZero(salt.data(), salt.size());
+        throw std::runtime_error("calculateSubKey: HKDF failed");
     }
 
-    // Hash the derived subkey
-    std::vector<uint8_t> hashDerived = CryptoUtils::calculateHash(derived);
+    // compute hash of subkey (e.g., SHA512)
+    std::vector<uint8_t> subhash = CryptoUtils::calculateHash(subkey);
 
-    // Build deterministic AAD and encrypt the hash with the masterKey
-    string aadSubKey = info + ":subkey";
-    sk.ep = CryptoUtils::encryptData(hashDerived, masterKey, aadSubKey);
+    // encrypt the hash with masterKey (AAD uses the same info string by convention)
+    EncryptedPacket ep = CryptoUtils::encryptData(subhash, masterKey, info);
 
-    sk.subParams.salt = Base64::encode(outSalt);
+    // Store encoded fields in sk.ep (EncryptedPacket uses strings for base64-encoded components)
+    sk.ep = ep; // EncryptedPacket already contains base64 string fields (encryptData did encode)
 
-    CryptoUtils::secureZero(derived.data(), derived.size());
-    CryptoUtils::secureZero(hashDerived.data(), hashDerived.size());
-    CryptoUtils::secureZero(outSalt.data(), outSalt.size());
+    // wipe sensitive temps
+    CryptoUtils::secureZero(subkey.data(), subkey.size());
+    CryptoUtils::secureZero(subhash.data(), subhash.size());
+    CryptoUtils::secureZero(salt.data(), salt.size());
 }
 
-bool CryptoUtils::verifySubKey(const std::vector<uint8_t>& sessionMasterKey, const SubKey& sk, const string& info) {
-    if (sessionMasterKey.empty()) return false;
+
+// ---------- verifySubKey ----------
+// Decrypt stored encrypted packet using masterKey, re-derive the subkey using stored salt and info,
+// hash it and compare with stored hash in a constant-time manner. Wipes sensitive buffers.
+bool CryptoUtils::verifySubKey(const std::vector<uint8_t> &masterKey, const SubKey &sk, const std::string &info) {
+    if (masterKey.empty()) return false;
     if (sk.subParams.keySize == 0) return false;
     if (sk.subParams.salt.empty()) return false;
 
-    // Decode salt
+    // decode salt
     std::vector<uint8_t> salt = Base64::decode(sk.subParams.salt);
     if (salt.empty()) return false;
 
-    // Recompute deterministic AAD string from stored info and decode AAD bytes that were stored in ep
-    std::vector<uint8_t> aad_bytes;
-    if (!sk.ep.aad.empty()) {
-        aad_bytes = Base64::decode(sk.ep.aad);
-    }
-    string aad_str(aad_bytes.begin(), aad_bytes.end());
+    // reconstruct EncryptedPacket from sk.ep strings so decryptData can decode internally
+    EncryptedPacket packet;
+    packet.alg = sk.ep.alg;
+    packet.iv = sk.ep.iv;
+    packet.cipherData = sk.ep.cipherData;
+    packet.tag = sk.ep.tag;
+    packet.aad = sk.ep.aad;
 
-    // Decrypt stored hashed subkey (AAD must match)
+    // decrypt to get storedHash
     std::vector<uint8_t> storedHash;
-    
-    storedHash = CryptoUtils::decryptData(sk.ep, sessionMasterKey);
-
-    if (storedHash.size() != CryptoUtils::HASH_SIZE) return false;
-
-    // Re-derive the subkey with the same salt and info
-    std::vector<uint8_t> recomputed((size_t)sk.subParams.keySize);
-    if (wc_HKDF(WC_SHA512, reinterpret_cast<const byte*>(sessionMasterKey.data()), (word32)sessionMasterKey.size(), salt.data(), (word32)salt.size(),
-                    reinterpret_cast<const byte*>(info.data()), (word32)info.size(), recomputed.data(), (word32)recomputed.size()) != 0) {
-        CryptoUtils::secureZero(recomputed.data(), recomputed.size());
-        CryptoUtils::secureZero(storedHash.data(), storedHash.size());
+    try {
+        storedHash = CryptoUtils::decryptData(packet, masterKey);
+    } catch (...) {
+        CryptoUtils::secureZero(salt.data(), salt.size());
         return false;
     }
 
-    // Hash recomputed subkey and compare with stored hash (constant-time)
-    std::vector<uint8_t> recomputedHash = CryptoUtils::calculateHash(recomputed);
-    // compare BEFORE zeroing recomputed
-    bool ok = false;
-    if (recomputedHash.size() == storedHash.size()) {
-        ok = CryptoUtils::verifyHash(recomputedHash, storedHash);
-    } else {
-        ok = false;
+    // re-derive subkey
+    std::vector<uint8_t> recomputed((size_t)sk.subParams.keySize);
+    if (wc_HKDF(WC_SHA512,
+                reinterpret_cast<const byte*>(masterKey.data()), (word32)masterKey.size(),
+                salt.data(), (word32)salt.size(),
+                reinterpret_cast<const byte*>(info.data()), (word32)info.size(),
+                recomputed.data(), (word32)recomputed.size()) != 0) {
+        CryptoUtils::secureZero(recomputed.data(), recomputed.size());
+        CryptoUtils::secureZero(storedHash.data(), storedHash.size());
+        CryptoUtils::secureZero(salt.data(), salt.size());
+        return false;
     }
 
-    // wipe recomputed
-    CryptoUtils::secureZero(recomputed.data(), recomputed.size());
+    // hash recomputed subkey and constant-time compare
+    std::vector<uint8_t> recomputedHash = CryptoUtils::calculateHash(recomputed);
+    bool ok = (recomputedHash.size() == storedHash.size()) && CryptoUtils::constEq(recomputedHash.data(), storedHash.data(), recomputedHash.size());
 
-    return ok;
-
-    // Wipe sensitive data
+    // wipe temps
     CryptoUtils::secureZero(recomputed.data(), recomputed.size());
     CryptoUtils::secureZero(recomputedHash.data(), recomputedHash.size());
     CryptoUtils::secureZero(storedHash.data(), storedHash.size());

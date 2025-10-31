@@ -4,7 +4,9 @@
 int main() {
     Shell shell = Shell();
     shell.run();
-    // Build a vault programmatically
+    return 0;
+}
+
 /*     try {
         // Initialize crypto library (RAII)
         CryptoGlobalInit init;  
@@ -101,6 +103,3 @@ int main() {
         std::cerr << "Exception: " << ex.what() << "\n";
         return 99;
     } */
-
-    return 0;
-}

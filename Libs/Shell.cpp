@@ -78,7 +78,14 @@ string Shell::editInput() {
     this->historyIndex = this->history.size();
     
     string inProgressBuffer = ""; 
-    std::cout << (loggedIn ? "\x1b[1;32m" + currentUser + "@ArborKey>\x1b[0m " : "\x1b[1;32mArborKey>\x1b[0m ") << std::flush;
+    // compute prompt string once per loop redraw
+    auto promptStr = [&]() -> string {
+        return (loggedIn ? "\x1b[1;32m" + currentUser + "@ArborKey>\x1b[0m " : "\x1b[1;32mArborKey>\x1b[0m ");
+    };
+
+    std::cout << promptStr() << std::flush;
+
+    size_t cursorPos = 0;
 
     while (true) {
         uint8_t c;
@@ -86,18 +93,47 @@ string Shell::editInput() {
         if (n == -1) return buffer;
 
         switch (c) {
+            case 1: // Ctrl + A
+                if (cursorPos > 0) {
+                    cursorPos = 0;
+                    // Redraw prompt + buffer and move terminal cursor to the start of buffer
+                    std::cout << "\r" << promptStr() << "\033[K" << buffer << std::flush;
+                    if (!buffer.empty()) {
+                        // Move left by the full buffer length so cursor sits at buffer start
+                        std::cout << "\033[" << buffer.size() << "D" << std::flush;
+                    }
+                }
+                break;
+            case 5: // Ctrl + E
+                if (cursorPos < buffer.size()) {
+                    cursorPos = buffer.size();
+                    // Redraw prompt + buffer. After printing buffer the terminal cursor is at the end.
+                    std::cout << "\r" << promptStr() << "\033[K" << buffer << std::flush;
+                }
+                break;
             case 3:  // Ctrl + C
                 raise(SIGINT);
                 buffer.clear();
                 return "";
             case 12: // Ctrl+L
                 std::cout << "\033[2J\033[H"; // clear screen
-                std::cout << (loggedIn ? "\x1b[1;32m" + currentUser + "@ArborKey>\x1b[0m " : "\x1b[1;32mArborKey>\x1b[0m ") << std::flush;
+                std::cout << promptStr() << std::flush;
+                // redraw buffer and move cursor to cursorPos
+                if (!buffer.empty()) {
+                    std::cout << buffer << std::flush;
+                    size_t moves = buffer.size() - cursorPos;
+                    if (moves > 0) std::cout << "\033[" << moves << "D" << std::flush;
+                }
                 break;
             case 127: // Backspace
-                if (!buffer.empty()) {
-                    buffer.pop_back();
-                    std::cout << "\b \b" << std::flush;
+                if (cursorPos > 0) {
+                    // erase char before cursor
+                    buffer.erase(buffer.begin() + (cursorPos - 1));
+                    cursorPos--;
+                    // redraw line and position cursor
+                    std::cout << "\r" << promptStr() << "\033[K" << buffer << std::flush;
+                    size_t moves = buffer.size() - cursorPos;
+                    if (moves > 0) std::cout << "\033[" << moves << "D" << std::flush;
                 }
                 break;
             // --- HANDLE ARROW KEYS ---
@@ -116,10 +152,10 @@ string Shell::editInput() {
                             }
                             this->historyIndex--;
                             buffer = this->history[this->historyIndex];
+                            cursorPos = buffer.size();
                             
                             // Redraw the line
-                            std::cout << "\r" << (loggedIn ? "\x1b[1;32m" + currentUser + "@ArborKey>\x1b[0m " : "\x1b[1;32mArborKey>\x1b[0m ")
-                                      << "\033[K" << buffer << std::flush;
+                            std::cout << "\r" << promptStr() << "\033[K" << buffer << std::flush;
                         }
                     } else if (seq[1] == 'B') { // DOWN Arrow
                         if (this->historyIndex < this->history.size()) {
@@ -131,16 +167,27 @@ string Shell::editInput() {
                                 // Still in history, get the next one
                                 buffer = this->history[this->historyIndex];
                             }
+                            cursorPos = buffer.size();
 
                             // Redraw the line
-                            std::cout << "\r" << (loggedIn ? "\x1b[1;32m" + currentUser + "@ArborKey>\x1b[0m " : "\x1b[1;32mArborKey>\x1b[0m ")
-                                      << "\033[K" << buffer << std::flush;
+                            std::cout << "\r" << promptStr() << "\033[K" << buffer << std::flush;
+                        }
+                    } else if (seq[1] == 'D') { // LEFT Arrow
+                        if (cursorPos > 0) {
+                            cursorPos--;
+                            // Move cursor left one position
+                            std::cout << "\033[1D" << std::flush;
+                        }
+                    } else if (seq[1] == 'C') { // RIGHT Arrow
+                        if (cursorPos < buffer.size()) {
+                            cursorPos++;
+                            // Move cursor right one position
+                            std::cout << "\033[1C" << std::flush;
                         }
                     }
                 }
                 break;
             }
-
             case '\r': // Carriage Return
             case '\n': // Line Feed (Enter)
                 std::cout << "\r\n" << std::flush; 
@@ -151,8 +198,14 @@ string Shell::editInput() {
             default:
                 // Only echo and add printable characters
                 if (std::isprint(c)) {
-                    buffer.push_back(c);
-                    std::cout << c << std::flush;
+                    // insert at cursor position
+                    buffer.insert(buffer.begin() + cursorPos, static_cast<char>(c));
+                    cursorPos++;
+
+                    // redraw whole line and move cursor if needed
+                    std::cout << "\r" << promptStr() << "\033[K" << buffer << std::flush;
+                    size_t moves = buffer.size() - cursorPos;
+                    if (moves > 0) std::cout << "\033[" << moves << "D" << std::flush;
                 }
         }
     
@@ -177,68 +230,71 @@ void Shell::signUp() {
         std::cout << "\r\nPlease logout first before creating a new account.\r\n";
         return;
     }
-    
+
     std::cout << "\r\n=== ArborKey Registration ===\r\n";
-    
+
     // Temporarily disable raw mode for credential input
     disableRawMode();
     Credentials creds;
     enableRawMode();
-    
+
     string username = creds.getUsername();
     string password = creds.getPassword();
-    
-    // Check if user already exists
 
-    
+    // check user already exists? (left as TODO; currently single local vault.json)
     std::cout << "\r\nCreating your secure vault...\r\n";
-    
-    // Prepare master-key params & derive DMK from password
+
+    // Prepare MasterKey params (salt will be generated by calculateMasterKey if empty)
     MasterKey mk;
     mk.masterParams.iterations = 100000;
     mk.masterParams.keySize = 32;
-    std::vector<uint8_t> outSalt(CryptoUtils::SALT_SIZE);
-    CryptoUtils::genSalt(outSalt, outSalt.size());
+    // mk.masterParams.salt left empty -> calculateMasterKey will generate and set it
 
-    // Derive master key from password
-    std::vector<uint8_t> masterKey = CryptoUtils::calculateDerivedKey(password, mk, outSalt);
+    // Derive master key (this will create salt and store it in mk if missing)
+    std::vector<uint8_t> masterKey;
+    try {
+        masterKey = CryptoUtils::calculateMasterKey(password, mk);
+    } catch (const std::exception& ex) {
+        std::cerr << "Failed to derive master key: " << ex.what() << "\n";
+        creds.clear();
+        return;
+    }
 
-    // wipe data
-    CryptoUtils::secureZero(masterKey.data(), masterKey.size());
-    CryptoUtils::secureZero(outSalt.data(), outSalt.size());
-
-    // Create & calculate subkey
+    // Create & calculate subkey (fills sk)
     SubKey sk;
     sk.subParams.hashType = "SHA512";
     sk.subParams.keySize = 32;
-    string info = "derived sub key";
-    CryptoUtils::genSalt(outSalt, outSalt.size());
+    try {
+        CryptoUtils::calculateSubKey(masterKey, "derived sub key", sk);
+    } catch (const std::exception &ex) {
+        CryptoUtils::secureZero(masterKey.data(), masterKey.size());
+        std::cerr << "Failed to calculate subkey: " << ex.what() << "\n";
+        creds.clear();
+        return;
+    }
 
-    CryptoUtils::calculateSubKey(masterKey, info, sk, outSalt);
-
-    // wipe outSalt random
-    CryptoUtils::secureZero(outSalt.data(), outSalt.size());
-    
-    // Create user vault
+    // Build vault and save
     Vault v;
-    v.id = CryptoUtils::genVaultId();   // base64 string id
+    v.id = CryptoUtils::genVaultId();
     v.username = username;
     v.mk = mk;
     v.sk = sk;
+    v.entries.clear();
 
-    // Save vault
     try {
         CryptoUtils::toFile(v, "vault.json");
         std::cout << "Vault written to vault.json\n";
     } catch (const std::exception& ex) {
         std::cerr << "Error writing vault: " << ex.what() << "\n";
     }
-    
-    
+
+    // Wipe masterKey from memory now that vault has been created
+    CryptoUtils::secureZero(masterKey.data(), masterKey.size());
+
     std::cout << "\r\nAccount created successfully!\r\n";
     std::cout << "Username: " << username << "\r\n";
     std::cout << "You can now login with your credentials.\r\n\r\n";
-    
+
     creds.clear();
 }
 
@@ -247,75 +303,61 @@ void Shell::login() {
         std::cout << "\r\nYou are already logged in as: " << currentUser << "\r\n";
         return;
     }
-    
+
     std::cout << "\r\n=== ArborKey Login ===\r\n";
-    
+
     // Temporarily disable raw mode for credential input
     disableRawMode();
     Credentials creds;
     enableRawMode();
-    
+
     string username = creds.getUsername();
     string password = creds.getPassword();
-    
-   /*  try {
-        // Load user vault
-        UserVault vault = loadUserVault(username);
-        
-        // Derive master key from password
-        std::vector<uint8_t> masterKey = CryptoUtils::deriveKeyFromPassword(password, vault.pbkdfParams);
-        
-        // Verify master key
-        std::vector<uint8_t> computedHash = CryptoUtils::calculateHash(masterKey);
-        if (!CryptoUtils::verifyHash(computedHash, vault.masterKeyHash)) {
-            std::cout << "\r\nInvalid password!\r\n";
-            CryptoUtils::secureZero(masterKey.data(), masterKey.size());
-            creds.clear();
-            return;
-        }
-        
-        // Decrypt signing key
-        std::vector<uint8_t> signKeyEncKey = CryptoUtils::subKey(masterKey, "user-signing-key-encryption", 32);
-        std::vector<uint8_t> signPrivKeyBytes = CryptoUtils::decryptData(vault.encryptedSignKey, signKeyEncKey);
-        
-        // Import signing key
-        sessionSignKey = std::make_unique<EcKeyPair>();
-        if (wc_ed25519_import_private_only(signPrivKeyBytes.data(), (word32)signPrivKeyBytes.size(), &sessionSignKey->key) != 0) {
-            std::cout << "\r\nFailed to load signing key\r\n";
-            CryptoUtils::secureZero(masterKey.data(), masterKey.size());
-            CryptoUtils::secureZero(signKeyEncKey.data(), signKeyEncKey.size());
-            CryptoUtils::secureZero(signPrivKeyBytes.data(), signPrivKeyBytes.size());
-            creds.clear();
-            return;
-        }
-        
-        // Import public key as well
-        if (wc_ed25519_import_public(vault.signPublicKey.data(), (word32)vault.signPublicKey.size(), &sessionSignKey->key) != 0) {
-            std::cout << "\r\nFailed to load public signing key\r\n";
-            CryptoUtils::secureZero(masterKey.data(), masterKey.size());
-            CryptoUtils::secureZero(signKeyEncKey.data(), signKeyEncKey.size());
-            CryptoUtils::secureZero(signPrivKeyBytes.data(), signPrivKeyBytes.size());
-            creds.clear();
-            return;
-        }
-        
-        // Set session variables
-        loggedIn = true;
-        currentUser = username;
-        sessionMasterKey = masterKey;
-        
-        std::cout << "\r\nLogin successful! Welcome back, " << username << "!\r\n";
-        std::cout << "You have " << vault.storedPasswords.size() << " stored password(s).\r\n\r\n";
-        
-        // Secure cleanup
-        CryptoUtils::secureZero(signKeyEncKey.data(), signKeyEncKey.size());
-        CryptoUtils::secureZero(signPrivKeyBytes.data(), signPrivKeyBytes.size());
+
+    // Load vault from user
+    Vault v;
+    try {
+        v = CryptoUtils::fromFile("vault.json");
+    } catch (const std::exception& ex) {
+        std::cerr << "Failed to read vault: " << ex.what() << "\r\n";
         creds.clear();
-        
-    } catch (const std::exception& e) {
-        std::cout << "\r\nLogin failed: " << e.what() << "\r\n";
+        return;
+    }
+
+    // Check username matches the vault
+    if (username != v.username) {
+        std::cout << "No vault for username: " << username << "\r\n";
         creds.clear();
-    } */
+        return;
+    }
+
+    // Derive master key using stored params in vault (salt present)
+    std::vector<uint8_t> masterKey;
+    try {
+        masterKey = CryptoUtils::calculateMasterKey(password, v.mk); // will use existing salt
+    } catch (const std::exception& ex) {
+        std::cerr << "Key derivation failed: " << ex.what() << "\r\n";
+        creds.clear();
+        return;
+    }
+
+    // Verify sub-key (this authenticates the vault/password)
+    bool ok = CryptoUtils::verifySubKey(masterKey, v.sk, "derived sub key");
+    if (!ok) {
+        std::cout << "Authentication failed: incorrect password or corrupt vault.\r\n";
+        CryptoUtils::secureZero(masterKey.data(), masterKey.size());
+        creds.clear();
+        return;
+    }
+
+    // Authentication success: keep master key in session
+    this->loggedIn = true;
+    this->currentUser = username;
+    this->sessionMasterKey = std::move(masterKey); // responsible for wiping on logout
+    std::cout << "\r\nLogin successful! Welcome back, " << username << "!\r\n";
+    std::cout << "You have " << v.entries.size() << " stored password(s).\r\n\r\n";
+
+    creds.clear();
 }
 
 void Shell::logout() {

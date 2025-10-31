@@ -22,6 +22,8 @@ private:
     bool loggedIn;
     std::string currentUser;
 
+    std::vector<uint8_t> sessionMasterKey;
+
     // Internal helpers: terminal + I/O
     void enableRawMode();
     void disableRawMode();
