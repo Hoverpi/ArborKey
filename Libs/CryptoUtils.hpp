@@ -83,7 +83,7 @@ struct SubKey {
 };
 
 struct Entry {
-    string id;  
+    uint32_t id;  
     string title;
     MetaData md;
     EncryptedPacket ep;
@@ -129,21 +129,19 @@ public:
     static std::vector<uint8_t> decryptData(const EncryptedPacket& packet, const std::vector<uint8_t>& key);
 
     // Master key helpers (single flexible function for both signup and login)
-    static std::vector<uint8_t> calculateMasterKey(const std::string &password, MasterKey &mk);
+    static std::vector<uint8_t> calculateMasterKey(const string &password, MasterKey &mk);
 
     // Optional helper to verify derived master key against an expected derived value
-    static bool verifyMasterKey(const std::string &password, const MasterKey &mk, const std::vector<uint8_t> &expectedDerived);
+    static bool verifyMasterKey(const string &password, const MasterKey &mk, const std::vector<uint8_t> &expectedDerived);
 
     // Sub-key helpers (signup: calculateSubKey; login: verifySubKey)
-    static void calculateSubKey(const std::vector<uint8_t> &masterKey, const std::string &info, SubKey &sk);
-    static bool verifySubKey(const std::vector<uint8_t> &masterKey, const SubKey &sk, const std::string &info);
+    static std::vector<uint8_t> calculateSubKey(const std::vector<uint8_t> &masterKey, const string &info, SubKey &sk);
+    static bool verifySubKey(const std::vector<uint8_t> &masterKey, const SubKey &sk, const string &info);
+    static std::vector<uint8_t> rederiveSubKey(const std::vector<uint8_t> &masterKey, const SubKey &sk, const string &info);
 
 
     // Convenience
     static void genSalt(std::vector<uint8_t>& out, size_t size);
-
-    // Entry creation helper
-    static Entry createEntry(const string& id_user, const string& title, const string& url, const EncryptedPacket& ep);
 
     // Asymmetric
     static EcKeyPairPtr genSignKeyPair();
@@ -162,8 +160,8 @@ public:
     // Vault <-> JSON helpers
     static json vaultToJson(const Vault& v);
     static Vault vaultFromJson(const json& j);
-    static void toFile(const Vault& v, const std::string& filepath);
-    static Vault fromFile(const std::string& filepath);
+    static void toFile(const Vault& v, const string& filepath);
+    static Vault fromFile(const string& filepath);
 
     static void genRandom(std::vector<uint8_t>& out, size_t size);
     static void secureZero(void* p, size_t n);

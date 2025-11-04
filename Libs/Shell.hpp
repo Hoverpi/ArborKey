@@ -14,20 +14,21 @@ private:
     struct termios oldTerm;
 
     // Input/history
-    std::vector<std::string> history;
+    std::vector<string> history;
     size_t historyIndex;
 
     // Session state
     bool running;
     bool loggedIn;
-    std::string currentUser;
+    string currentUser;
 
     std::vector<uint8_t> sessionMasterKey;
+    std::vector<uint8_t> sessionSubKey;
 
     // Internal helpers: terminal + I/O
     void enableRawMode();
     void disableRawMode();
-    std::string editInput();
+    string editInput();
     void createProcess();
 
     // Commands - explicit return types
@@ -40,19 +41,8 @@ private:
     void viewPassword();
     void deletePassword();
     void cmdExit();
-
-    // Vault helpers (used from Shell.cpp)
-/*     UserVault loadUserVault(const std::string& username);
-    void saveUserVault(const UserVault& vault);
-    std::string getUserVaultPath(const std::string& username);
- */
-    // Session management
     void clearSession();
 
-    // Encryption helpers (used in Shell.cpp)
-/*     EncryptedPacket encryptPasswordEntry(const PasswordEntry& entry, const std::string& subkeyInfo);
-    PasswordEntry decryptPasswordEntry(const EncryptedPacket& packet, const std::string& subkeyInfo);
- */
 public:
     Shell();
     ~Shell();
